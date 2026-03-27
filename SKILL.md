@@ -287,9 +287,91 @@ updated: 2026-03-19
 
 经验/陷阱内容标注发现日期，当作"可能有效的提示"而非"保证正确的事实"。
 
+## Workflow：可复用的操作流程
+
+将通过对话验证过的浏览器操作流程沉淀为 workflow 文件，后续可直接调用执行。
+
+### 核心机制：命令优先，自然语言兜底
+
+每个 step 同时记录 **agent-browser CLI 命令** 和 **自然语言描述**：
+
+1. **执行命令** — 先跑 `command` 字段的精确命令，速度快、确定性高
+2. **验证结果** — 用 `verify` 条件判断是否成功
+3. **兜底处理** — 命令失败或验证不通过时，AI 根据 `description` + 当前页面状态自主判断如何完成这一步
+
+```
+command 成功 → verify 通过 → 下一步
+command 失败 ──┐
+verify 不通过 ─┤→ AI 读取 description + snapshot → 自主操作 → 再 verify
+```
+
+### 创建 workflow
+
+用户说"创建 workflow"或描述一个需要沉淀的操作流程时，进入创建模式：
+
+1. **明确目标** — 确认 workflow 名称、适用场景、前置条件
+2. **逐步走通** — 通过对话一步步操作页面，每完成一步记录：
+   - `command`：实际执行成功的 agent-browser 命令
+   - `description`：这一步在做什么、目标是什么
+   - `verify`：如何判断这一步成功了
+3. **保存文件** — 全部走通后写入 `workflows/{name}.md`，格式参考 `workflows/_template.md`
+
+### 执行 workflow
+
+用户要求执行某个 workflow 时：
+
+1. 读取 workflow 文件，确认前置条件
+2. 按 step 顺序执行，每步遵循「命令 → 验证 → 兜底」机制
+3. 兜底时必须重新 `snapshot` 获取当前页面状态，再根据 description 判断操作
+4. 所有 step 完成后，确认最终状态符合预期
+
+### 列出 workflow
+
+用户问"有哪些 workflow"时：
+
+```bash
+ls workflows/*.md | grep -v _template
+```
+
+读取每个文件的 frontmatter，展示名称、描述、适用域名。
+
+### workflow 文件格式
+
+存储在 `workflows/` 下，每个文件一个 workflow：
+
+```markdown
+---
+name: workflow 名称
+description: 一句话描述
+domain: 适用站点
+created: 创建日期
+updated: 最后更新日期
+---
+
+# workflow 名称
+
+## 前置条件
+- 需要满足的条件
+
+## Steps
+
+### Step 1: 步骤名称
+**command**: `agent-browser 具体命令`
+**description**: 自然语言描述这一步做什么
+**verify**: 成功条件
+```
+
+### 维护
+
+- workflow 执行失败且通过兜底修复后，更新对应 step 的 command
+- 页面改版导致多个 step 失效时，建议重新走一遍创建流程
+- 过时的 workflow 标注 `deprecated: true` 而非删除
+
 ## References 索引
 
 | 文件                                   | 何时加载                                       |
 | -------------------------------------- | ---------------------------------------------- |
 | `references/cdp-api.md`                | 需要 CDP API 详细参考、JS 提取模式、错误处理时 |
 | `references/site-patterns/{domain}.md` | 确定目标网站后，读取对应站点经验               |
+| `references/agent-browser.md`          | 使用 agent-browser 时，读取连接和操作踩坑经验  |
+| `workflows/_template.md`              | 创建新 workflow 时，参考模板格式               |
