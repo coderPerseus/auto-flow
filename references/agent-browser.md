@@ -31,3 +31,8 @@ agent-browser close 2>/dev/null; agent-browser connect "ws://..."
 ## 部分元素不在可访问性树中
 
 某些 UI 框架渲染的元素（如千牛侧边栏导航）不出现在 `snapshot` 中。改用 `eval` 查询 DOM。
+
+## 如果上面所有内容都不能解决问题，尝试查看源码和文档寻找 agent-browser 使用方法
+
+- 源码：https://github.com/vercel-labs/agent-browser
+- 文档：https://agent-browser.dev/

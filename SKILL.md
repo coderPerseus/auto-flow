@@ -1,7 +1,8 @@
 ---
 name: auto-flow
 license: MIT
-description: 基于 agent-browser 和 CDP 的浏览器自动化 workflow 技能。创建、管理、执行可复用的浏览器操作流程。
+description:
+  基于 agent-browser 和 CDP 的浏览器自动化 workflow 技能。创建、管理、执行可复用的浏览器操作流程。
   触发场景：用户要求创建 workflow、执行 workflow、更新 workflow、列出 workflow，或描述一个需要在浏览器中重复执行的操作流程。
 metadata:
   author: luckySnail
@@ -18,21 +19,22 @@ metadata:
 bash ${CLAUDE_SKILL_DIR}/scripts/check-deps.sh
 ```
 
-- **Node.js 22+**：必需（使用原生 WebSocket）
+- **Node.js 22+**：必需（使用原生 WebSocket），如果没有安装先尝试自动安装
 - **Chrome remote-debugging**：在 Chrome 地址栏打开 `chrome://inspect/#remote-debugging`，勾选 **"Allow remote debugging for this browser instance"**，可能需要重启浏览器
-- **agent-browser**：`npm i -g agent-browser`
+- **agent-browser**：`npm i -g agent-browser` ,需要检测是否已经是最新版本（npm ls -g agent-browser --depth=0; npm view agent-browser version），如果不是最新版本需要更新(npm install -g agent-browser@latest)
 
 检查通过后再执行操作，未通过则引导用户完成设置。
 
 ## 核心理念
 
-**Workflow = 对话验证 → 结构化沉淀 → 可靠重放。**
+**Workflow = 对话验证 → 结构化沉淀 → 可靠重放 → 执行进化。**
 
-这个 skill 做三件事：
+这个 skill 做四件事：
 
 1. **创建** — 通过对话逐步走通一个浏览器操作流程，每一步记录精确命令 + 自然语言描述 + 验证条件，保存为 workflow 文件
 2. **执行** — 读取 workflow 文件，按步骤自动执行，失败时 AI 根据描述 + 页面状态自主恢复
-3. **维护** — workflow 执行中发现步骤失效时，更新命令；页面改版时，重新走通创建流程
+3. **进化** — 每次执行后复盘，将兜底中验证有效的操作回写 workflow，让它越用越准
+4. **重建** — 页面大幅改版导致多数步骤失效时，重新走通创建流程
 
 所有浏览器操作都在用户日常 Chrome 中进行，天然携带登录态。不主动操作用户已有 tab，所有操作在自己创建的 tab 中完成。
 
@@ -40,10 +42,10 @@ bash ${CLAUDE_SKILL_DIR}/scripts/check-deps.sh
 
 有两种操作浏览器的方式，根据场景选择或混合使用：
 
-| 方式 | 适用场景 | 优势 |
-|------|---------|------|
-| **agent-browser**（CLI） | 表单填写、多步交互、页面结构探索 | snapshot/ref 模式，AI 直接"看到"页面结构，无需手写选择器 |
-| **CDP Proxy**（curl API） | 精确 JS 执行、DOM 操作、批量数据提取 | 精确控制 DOM，适合程序化操作 |
+| 方式                      | 适用场景                             | 优势                                                     |
+| ------------------------- | ------------------------------------ | -------------------------------------------------------- |
+| **agent-browser**（CLI）  | 表单填写、多步交互、页面结构探索     | snapshot/ref 模式，AI 直接"看到"页面结构，无需手写选择器 |
+| **CDP Proxy**（curl API） | 精确 JS 执行、DOM 操作、批量数据提取 | 精确控制 DOM，适合程序化操作                             |
 
 两者共享同一个 Chrome 实例和登录态，可在同一任务中混合使用。
 
@@ -131,7 +133,7 @@ Workflow 存储在 `workflows/` 下，每个文件一个 workflow：
 name: workflow 名称
 description: 一句话描述
 domain: 适用站点
-params:                    # 可选：workflow 参数
+params: # 可选：workflow 参数
   - name: param_name
     description: 参数说明
     required: true
@@ -142,17 +144,20 @@ updated: 2026-03-27
 # workflow 名称
 
 ## 前置条件
+
 - 已登录 xxx
 - 需要准备的素材/数据
 
 ## Steps
 
 ### Step 1: 步骤名称
+
 **command**: `agent-browser 具体命令`
 **description**: 自然语言描述这一步做什么，当 command 失败时 AI 根据这段描述 + 当前页面状态自主完成
 **verify**: 成功条件（URL 包含 xxx、页面出现"xxx"文字、某元素可见）
 
 ### Step 2: 步骤名称
+
 **command**: `agent-browser 具体命令`
 **description**: 自然语言描述
 **verify**: 验证条件
@@ -165,12 +170,14 @@ updated: 2026-03-27
 用户说"创建 workflow"或描述一个需要沉淀的操作流程时，进入创建模式：
 
 **① 明确目标** — 确认：
+
 - workflow 名称（英文短横线命名，如 `qianniu-upload-material`）
 - 适用场景和目标网站
 - 前置条件（登录态、素材准备等）
 - 是否需要参数化（每次执行时变化的输入，如文件路径、文本内容）
 
 **② 逐步走通** — 在浏览器中一步步操作，每完成一步记录：
+
 - `command`：实际执行成功的 agent-browser / CDP 命令
 - `description`：这一步在做什么、目标是什么（要足够详细，AI 兜底时靠它理解意图）
 - `verify`：如何判断这一步成功了（尽量用客观可检测的条件：URL 变化、元素出现、文本包含）
@@ -178,6 +185,7 @@ updated: 2026-03-27
 **③ 保存文件** — 全部走通后写入 `workflows/{name}.md`
 
 **创建时的原则：**
+
 - 每一步都必须实际在浏览器中验证通过，不凭想象写命令
 - description 要写给"不了解这个页面的 AI"看——不能假设它知道页面布局
 - verify 条件要客观可检测，避免模糊描述
@@ -198,6 +206,7 @@ verify 不通过 ─┤→ AI 读取 description + snapshot 当前页面 → 自
 ```
 
 **③ 兜底恢复** — 当 command 失败或 verify 不通过时：
+
 1. 重新 `snapshot` 获取当前页面状态
 2. 对照 description 理解这一步的目标
 3. 根据实际页面结构自主决定操作方式（点击其他元素、用 eval 操作 DOM 等）
@@ -205,23 +214,57 @@ verify 不通过 ─┤→ AI 读取 description + snapshot 当前页面 → 自
 
 **④ 完成确认** — 所有 step 完成后，确认最终状态符合预期
 
+**⑤ 执行复盘** — workflow 执行结束后（无论成功或失败），进入复盘阶段，评估是否需要更新 workflow。详见下方「执行后自进化」。
+
 **执行时的原则：**
+
 - 不要跳过任何 step，即使看起来"已经在正确位置"
 - 每一步的 verify 必须通过才能进入下一步
 - 兜底时不要盲目重试同一个命令，要看页面实际状态再决定
 - 如果某个 step 连续兜底 3 次仍失败，停下来向用户报告当前状态
+- **记录兜底事件**：每次兜底恢复成功时，记住哪个 step、原始 command 为什么失败、实际用了什么方式修复。这些是复盘的输入
 
-### 更新 workflow
+### 执行后自进化
 
-两种触发场景：
+**每次执行完毕后必须进入此阶段。** Workflow 的价值在于越用越准——执行中遇到的问题不是一次性事件，而是改进信号。
 
-**执行中自动更新** — workflow 执行时某个 step 的 command 失败但通过兜底修复成功了：
-- 将兜底时实际有效的操作更新为该 step 的新 command
-- 更新 frontmatter 的 `updated` 日期
+#### 复盘流程
 
-**手动重新创建** — 页面改版导致多个 step 失效时：
-- 建议用户重新走一遍创建流程
-- 保留旧文件（标注 `deprecated: true`），创建新版本
+**① 回顾执行记录** — 逐 step 检查：
+
+- 哪些 step 的 command 一次成功？（无需改动）
+- 哪些 step 触发了兜底？原因是什么？
+- 兜底修复用了什么方式？是否比原 command 更可靠？
+
+**② 评估严重性** — 对每个兜底事件判断：
+
+| 严重性           | 特征                                                                     | 处理方式                                      |
+| ---------------- | ------------------------------------------------------------------------ | --------------------------------------------- |
+| **高：必须更新** | command 执行报错（选择器失效、元素不存在、API 变更）；每次执行大概率复现 | 立即更新 step 的 command 和 description       |
+| **中：建议更新** | command 成功但 verify 不通过（页面结构微调、时序问题）；兜底方案明显更优 | 更新 command，在 description 中补充新发现     |
+| **低：记录观察** | 偶发性问题（网络延迟、一次性弹窗）；兜底后原路径仍可用                   | 不改 command，但在 description 中追加注意事项 |
+| **无需处理**     | 全部 step 一次通过                                                       | 不做任何改动                                  |
+
+**③ 执行更新** — 根据评估结果：
+
+- **更新 command**：将兜底时验证有效的操作写入 command 字段，替换失效的旧命令
+- **丰富 description**：补充执行中发现的新信息（实际选择器位置、元素不在可访问性树中、需要 eval 的原因等），让下次兜底更高效
+- **调整 verify**：如果验证条件不够准确（误判通过/不通过），修正为更精确的条件
+- **更新 frontmatter**：`updated` 改为当前日期
+- **站点经验联动**：如果发现了平台级规律（如"千牛侧边栏不在可访问性树中"），同步写入 `references/site-patterns/{domain}.md`
+
+**④ 判断是否需要重建** — 如果单次执行中 **超过半数 step 触发兜底**，说明页面可能已大幅改版，此时：
+
+- 向用户建议重新走一遍创建流程
+- 将当前文件标注 `deprecated: true`，保留作为参考
+- 创建新版 workflow
+
+#### 进化原则
+
+- **只写验证过的事实**：更新的 command 必须是本次执行中实际成功的操作，不猜测、不泛化
+- **保留兜底能力**：command 变了但 description 的自然语言描述必须保持完整——它是最后的兜底依据，不能因为 command 更新了就简化 description
+- **渐进式改进**：每次执行只更新本次发现的问题，不主动重构未出问题的 step
+- **向用户透明**：复盘结束后，简要告知用户做了哪些更新及原因（一两句话即可，不需要冗长报告）
 
 ### 列出 workflow
 
@@ -261,21 +304,25 @@ domain: example.com
 aliases: [示例, Example]
 updated: 2026-03-27
 ---
+
 ## 平台特征
+
 架构、反爬行为、登录需求、内容加载方式等
 
 ## 有效模式
+
 已验证的 URL 模式、操作策略、选择器
 
 ## 已知陷阱
+
 什么会失败以及为什么（标注发现日期）
 ```
 
 ## References 索引
 
-| 文件 | 何时加载 |
-|------|---------|
-| `references/cdp-api.md` | 需要 CDP Proxy API 详细参考时 |
-| `references/agent-browser.md` | agent-browser 连接或操作遇到问题时 |
-| `references/site-patterns/{domain}.md` | 确定目标网站后，读取对应站点经验 |
-| `workflows/_template.md` | 创建新 workflow 时，参考模板格式 |
+| 文件                                   | 何时加载                           |
+| -------------------------------------- | ---------------------------------- |
+| `references/cdp-api.md`                | 需要 CDP Proxy API 详细参考时      |
+| `references/agent-browser.md`          | agent-browser 连接或操作遇到问题时 |
+| `references/site-patterns/{domain}.md` | 确定目标网站后，读取对应站点经验   |
+| `workflows/_template.md`               | 创建新 workflow 时，参考模板格式   |
