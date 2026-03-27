@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(agent-browser open:*)",
+      "Bash(agent-browser eval:*)",
+      "Bash(agent-browser get:*)",
+      "Bash(agent-browser snapshot:*)",
+      "Bash(agent-browser click:*)",
+      "Bash(agent-browser screenshot:*)"
+    ]
+  }
+}
