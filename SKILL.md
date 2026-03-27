@@ -1,257 +1,249 @@
 ---
-name: web-access
+name: auto-flow
 license: MIT
-github: https://github.com/eze-is/web-access
-description: 所有联网操作必须通过此 skill 处理，包括：搜索、网页抓取、登录后操作、网络交互等。
-  触发场景：用户要求搜索信息、查看网页内容、访问需要登录的网站、操作网页界面、抓取社交媒体内容（小红书、微博、推特等）、读取动态渲染页面、以及任何需要真实浏览器环境的网络任务。
+description: 基于 agent-browser 和 CDP 的浏览器自动化 workflow 技能。创建、管理、执行可复用的浏览器操作流程。
+  触发场景：用户要求创建 workflow、执行 workflow、更新 workflow、列出 workflow，或描述一个需要在浏览器中重复执行的操作流程。
 metadata:
   author: luckySnail
-  version: "1.0.1"
+  version: "1.0.0"
 ---
 
-# web-access Skill
+# auto-flow Skill
+
+基于 agent-browser 和 CDP 的浏览器 workflow 自动化。将浏览器操作沉淀为可复用的 workflow，后续一键执行。
 
 ## 前置检查
 
-在开始联网操作前，先检查 CDP 模式可用性：
-
 ```bash
-bash ~/.claude/skills/web-access/scripts/check-deps.sh
+bash ${CLAUDE_SKILL_DIR}/scripts/check-deps.sh
 ```
 
-- **Node.js 22+**：必需（使用原生 WebSocket）。版本低于 22 可用但需安装 `ws` 模块。
-- **Chrome remote-debugging**：在 Chrome 地址栏打开 `chrome://inspect/#remote-debugging`，勾选 **"Allow remote debugging for this browser instance"** 即可，可能需要重启浏览器。
+- **Node.js 22+**：必需（使用原生 WebSocket）
+- **Chrome remote-debugging**：在 Chrome 地址栏打开 `chrome://inspect/#remote-debugging`，勾选 **"Allow remote debugging for this browser instance"**，可能需要重启浏览器
+- **agent-browser**：`npm i -g agent-browser`
 
-检查通过后再启动 CDP Proxy 执行操作，未通过则引导用户完成设置。
+检查通过后再执行操作，未通过则引导用户完成设置。
 
-## 浏览哲学
+## 核心理念
 
-**像人一样思考，兼顾高效与适应性的完成任务。**
+**Workflow = 对话验证 → 结构化沉淀 → 可靠重放。**
 
-执行任务时不会过度依赖固有印象所规划的步骤，而是带着目标进入，边看边判断，遇到阻碍就解决，发现内容不够就深入——全程围绕「我要达成什么」做决策。这个 skill 的所有行为都应遵循这个逻辑。
+这个 skill 做三件事：
 
-**① 拿到请求** — 先明确用户要做什么，定义成功标准：什么算完成了？需要获取什么信息、执行什么操作、达到什么结果？这是后续所有判断的锚点。
+1. **创建** — 通过对话逐步走通一个浏览器操作流程，每一步记录精确命令 + 自然语言描述 + 验证条件，保存为 workflow 文件
+2. **执行** — 读取 workflow 文件，按步骤自动执行，失败时 AI 根据描述 + 页面状态自主恢复
+3. **维护** — workflow 执行中发现步骤失效时，更新命令；页面改版时，重新走通创建流程
 
-**② 选择起点** — 根据任务性质、平台特征、达成条件，选一个最可能直达的方式作为第一步去验证。一次成功当然最好；不成功则在③中调整。比如，需要操作页面、需要登录态、已知静态方式不可达的平台（小红书、微信公众号等）→ 直接 CDP
+所有浏览器操作都在用户日常 Chrome 中进行，天然携带登录态。不主动操作用户已有 tab，所有操作在自己创建的 tab 中完成。
 
-**③ 过程校验** — 每一步的结果都是证据，不只是成功或失败的二元信号。用结果对照①的成功标准，更新你对目标的判断：路径在推进吗？结果的整体面貌（质量、相关度、量级）是否指向目标可达？发现方向错了立即调整，不在同一个方式上反复重试——搜索没命中不等于"还没找对方法"，也可能是"目标不存在"；API 报错、页面缺少预期元素、重试无改善，都是在告诉你该重新评估方向。遇到弹窗、登录墙等障碍，判断它是否真的挡住了目标：挡住了就处理，没挡住就绕过——内容可能已在页面 DOM 中，交互只是展示手段。
+## 浏览器操作基础
 
-**④ 完成判断** — 对照定义的任务成功标准，确认任务完成后才停止，但也不要过度操作，不为了"完整"而浪费代价。
+有两种操作浏览器的方式，根据场景选择或混合使用：
 
-## 联网工具选择
-
-- **确保信息的真实性，一手信息优于二手信息**：搜索引擎和聚合平台是信息发现入口。当多次搜索尝试后没有质的改进时，升级到更根本的获取方式：定位一手来源（官网、官方平台、原始页面）。
-
-| 场景                                                                           | 工具                                                                   |
-| ------------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
-| 搜索摘要或关键词结果，发现信息来源                                             | **WebSearch**                                                          |
-| URL 已知，需要从页面定向提取特定信息                                           | **WebFetch**（拉取网页内容，由小模型根据 prompt 提取，返回处理后结果） |
-| URL 已知，需要原始 HTML 源码（meta、JSON-LD 等结构化字段）                     | **curl**                                                               |
-| 非公开内容，或已知静态层无效的平台（小红书、微信公众号等公开内容也被反爬限制） | **浏览器 CDP**（直接，跳过静态层）                                     |
-| 需要登录态、交互操作，或需要像人一样在浏览器内自由导航探索                     | **浏览器 CDP**                                                         |
-
-浏览器 CDP 不要求 URL 已知——可从任意入口出发，通过页面内搜索、点击、跳转等方式找到目标内容。WebSearch、WebFetch、curl 均不处理登录态。
-
-**Jina**（可选预处理层，可与 WebFetch/curl 组合使用，由于其特性可节省 tokens 消耗，请积极在任务合适时组合使用）：第三方网络服务，可将网页转为 Markdown，大幅节省 token 但可能有信息损耗。调用方式为 `r.jina.ai/example.com`（URL 前加前缀，不保留原网址 http 前缀），限 20 RPM。适合文章、博客、文档、PDF 等以正文为核心的页面；对数据面板、商品页等非文章结构页面可能提取到错误区块。
-
-进入浏览器层后，有两种"看和做"的方式：
-
-**CDP Proxy（程序化优先）**：`/eval` 是你的眼睛和手——用它查询 DOM 发现元素，用 `/click` 点击，用 `/scroll` 滚动，用 `/eval` 填表提交。先 eval 了解页面结构，再决定下一步。
-
-**agent-browser（交互优先）**：`snapshot -i` 是你的眼睛——它返回页面的可访问性树和 `@ref` 标识，你直接用 `click @e1`、`fill @e2 "text"` 操作，不需要写 CSS 选择器。适合不确定页面结构时的探索式操作。
-
-在页面内浏览时，不需要提前规划所有步骤——看到列表就点进详情，看到分页就翻页，看到内容就提取。
-
-### 程序化操作与 GUI 交互
-
-浏览器内操作页面有两种方式：
-
-- **程序化方式**（构造 URL 直接导航、eval 操作 DOM）：成功时速度快、精确，但对网站来说不是正常用户行为，更容易触发反爬机制。
-- **GUI 交互**（点击按钮、填写输入框、滚动浏览）：GUI 是为人设计的，网站不会限制正常的 UI 操作，确定性最高，但步骤多、速度慢。
-
-根据对目标平台的了解来判断。当程序化方式受阻时，GUI 交互是可靠的兜底。
-
-**站点内 URL 的可靠性**：站点自己生成的链接（DOM 中的 href）天然携带平台所需的完整上下文，而手动构造的 URL 可能缺失隐式必要参数，导致被拦截、返回错误页面、甚至触发反爬。当构造的 URL 出现这类异常时，应考虑是否是缺失参数所致。
-
-## 浏览器 CDP 模式
-
-通过 CDP 直连用户日常 Chrome，天然携带登录态，无需启动独立浏览器。
-若无用户明确要求，不主动操作用户已有 tab，所有操作都在自己创建的后台 tab 中进行，保持对用户环境的最小侵入。不关闭用户 tab 的前提下，完成任务后关闭自己创建的 tab，保持环境整洁。
-
-有两种 CDP 操作方式，根据场景选择：
-
-| 方式                      | 适用场景                                   | 优势                                                      |
-| ------------------------- | ------------------------------------------ | --------------------------------------------------------- |
-| **CDP Proxy**（curl API） | 数据提取、JS 执行、媒体抓取、批量操作      | 精确控制 DOM、适合程序化操作和并行子 Agent                |
-| **agent-browser**（CLI）  | 表单填写、多步交互、效果走查、页面结构理解 | snapshot/ref 模式让 AI 直接"看到"页面结构，无需手写选择器 |
+| 方式 | 适用场景 | 优势 |
+|------|---------|------|
+| **agent-browser**（CLI） | 表单填写、多步交互、页面结构探索 | snapshot/ref 模式，AI 直接"看到"页面结构，无需手写选择器 |
+| **CDP Proxy**（curl API） | 精确 JS 执行、DOM 操作、批量数据提取 | 精确控制 DOM，适合程序化操作 |
 
 两者共享同一个 Chrome 实例和登录态，可在同一任务中混合使用。
 
-### agent-browser 模式（推荐用于交互类任务）
+### agent-browser（推荐，交互类操作首选）
 
-当任务涉及**复杂页面交互**（多步表单、动态元素定位、UI 走查、视觉审查）时，优先使用 agent-browser。它的 `snapshot → @ref → 操作 → 再 snapshot` 循环比手写 CSS 选择器更可靠——AI 直接从 snapshot 的可访问性树中识别元素，不需要猜测选择器。
-
-**前置**：需安装 `npm i -g agent-browser`。
+核心循环：`snapshot → 识别 @ref → 操作 → 再 snapshot`
 
 ```bash
 # 连接用户 Chrome（确保先关掉 agent-browser 自带的 headless 实例）
-agent-browser close
-agent-browser connect <port>           # port 从 check-deps.sh 获取，通常为 9222
+agent-browser close 2>/dev/null; agent-browser connect <ws-url>
 
-# 核心循环：snapshot → 识别 @ref → 操作 → 再 snapshot
-agent-browser open <url>
-agent-browser wait --load networkidle
-agent-browser snapshot -i              # 获取可交互元素（带 @e1, @e2...）
-agent-browser click @e1                # 通过 @ref 点击
-agent-browser fill @e2 "text"          # 通过 @ref 填写
-agent-browser snapshot -i              # 页面变化后必须重新 snapshot
+# 核心操作
+agent-browser open <url>                # 打开页面
+agent-browser wait --load networkidle   # 等待加载
+agent-browser snapshot -i               # 获取可交互元素（带 @e1, @e2...）
+agent-browser click @e1                 # 通过 @ref 点击
+agent-browser fill @e2 "text"           # 通过 @ref 填写
+agent-browser snapshot -i               # 页面变化后必须重新 snapshot
 
-# 页面信息
-agent-browser get text @e1             # 获取元素文本
-agent-browser get url                  # 当前 URL
-agent-browser screenshot [path]        # 截屏
-agent-browser screenshot --annotate    # 带标注截屏（@ref 编号叠加在页面上）
-agent-browser tab list                 # 列出标签页
-agent-browser scroll down 500          # 滚动
+# 辅助
+agent-browser get text @e1              # 获取元素文本
+agent-browser get url                   # 当前 URL
+agent-browser screenshot [path]         # 截屏
+agent-browser screenshot --annotate     # 带标注截屏
+agent-browser tab list                  # 列出标签页
+agent-browser scroll down 500           # 滚动
+agent-browser eval 'JS表达式'            # 执行 JS（部分元素不在可访问性树中时用）
 ```
 
-**关键**：`@ref` 在页面变化后失效，操作后必须重新 `snapshot`。详见 `agent-browser --help`。
+**关键**：`@ref` 在页面变化后失效，操作后必须重新 `snapshot`。
 
-### CDP Proxy 模式
+**连接方式**：需用完整 WebSocket URL，从 `~/Library/Application Support/Google/Chrome/DevToolsActivePort` 获取。详见 `references/agent-browser.md`。
 
-适合精确的 JS 执行、DOM 操作、批量数据提取、并行子 Agent 场景。
+### CDP Proxy（精确控制）
 
-**启动**：
+启动后通过 curl 调用 HTTP API：
 
 ```bash
-bash ~/.claude/skills/web-access/scripts/check-deps.sh
+# 启动（check-deps.sh 会自动启动）
+bash ${CLAUDE_SKILL_DIR}/scripts/check-deps.sh
+
+# 常用操作
+curl -s "http://localhost:3456/new?url=URL"                          # 新建 tab
+curl -s "http://localhost:3456/targets"                               # 列出 tab
+curl -s -X POST "http://localhost:3456/eval?target=ID" -d 'JS代码'    # 执行 JS
+curl -s -X POST "http://localhost:3456/click?target=ID" -d 'CSS选择器' # 点击
+curl -s -X POST "http://localhost:3456/clickAt?target=ID" -d 'CSS选择器' # 真实鼠标点击
+curl -s -X POST "http://localhost:3456/setFiles?target=ID" \
+  -d '{"selector":"input[type=file]","files":["/path/to/file.png"]}'  # 文件上传
+curl -s "http://localhost:3456/screenshot?target=ID&file=/tmp/shot.png" # 截图
+curl -s "http://localhost:3456/scroll?target=ID&direction=bottom"     # 滚动
+curl -s "http://localhost:3456/navigate?target=ID&url=URL"            # 导航
+curl -s "http://localhost:3456/close?target=ID"                       # 关闭 tab
 ```
 
-脚本会依次检查 Node.js、Chrome 端口，并确保 Proxy 已连接（未运行则自动启动并等待）。Proxy 启动后持续运行。
+完整 API 参考见 `references/cdp-api.md`。
 
-### Proxy API
+### 操作技巧
 
-所有操作通过 curl 调用 HTTP API：
-
-```bash
-# 列出用户已打开的 tab
-curl -s http://localhost:3456/targets
-
-# 创建新后台 tab（自动等待加载）
-curl -s "http://localhost:3456/new?url=https://example.com"
-
-# 页面信息
-curl -s "http://localhost:3456/info?target=ID"
-
-# 执行任意 JS：可读写 DOM、提取数据、操控元素、触发状态变更、提交表单、调用内部方法
-curl -s -X POST "http://localhost:3456/eval?target=ID" -d 'document.title'
-
-# 捕获页面渲染状态（含视频当前帧）
-curl -s "http://localhost:3456/screenshot?target=ID&file=/tmp/shot.png"
-
-# 导航、后退
-curl -s "http://localhost:3456/navigate?target=ID&url=URL"
-curl -s "http://localhost:3456/back?target=ID"
-
-# 点击（POST body 为 CSS 选择器）— JS el.click()，简单快速，覆盖大多数场景
-curl -s -X POST "http://localhost:3456/click?target=ID" -d 'button.submit'
-
-# 真实鼠标点击 — CDP Input.dispatchMouseEvent，算用户手势，能触发文件对话框
-curl -s -X POST "http://localhost:3456/clickAt?target=ID" -d 'button.upload'
-
-# 文件上传 — 直接设置 file input 的本地文件路径，绕过文件对话框
-curl -s -X POST "http://localhost:3456/setFiles?target=ID" -d '{"selector":"input[type=file]","files":["/path/to/file.png"]}'
-
-# 滚动（触发懒加载）
-curl -s "http://localhost:3456/scroll?target=ID&y=3000"
-curl -s "http://localhost:3456/scroll?target=ID&direction=bottom"
-
-# 关闭 tab
-curl -s "http://localhost:3456/close?target=ID"
-```
-
-### 页面内导航
-
-两种方式打开页面内的链接：
-
-- **`/click`**：在当前 tab 内直接点击，简单直接，串行处理。适合需要在同一页面内连续操作的场景，如点击展开、翻页、进入详情等。
-- **`/new` + 完整 URL**：从 DOM 提取对象链接的完整地址（包含所有查询参数），在新 tab 中打开。适合需要同时访问多个页面的场景。
-
-很多网站的链接包含会话相关的参数（如 token），这些参数是正常访问所必需的。提取 URL 时应保留完整地址，不要裁剪或省略参数。
-
-### 媒体资源提取
-
-判断内容在图片里时，用 `/eval` 从 DOM 直接拿图片 URL，再定向读取——比全页截图精准得多。
-
-### 技术事实
-
-- 页面中存在大量已加载但未展示的内容——轮播中非当前帧的图片、折叠区块的文字、懒加载占位元素等，它们存在于 DOM 中但对用户不可见。以数据结构（容器、属性、节点关系）为单位思考，可以直接触达这些内容。
-- DOM 中存在选择器不可跨越的边界（Shadow DOM 的 `shadowRoot`、iframe 的 `contentDocument`等）。eval 递归遍历可一次穿透所有层级，返回带标签的结构化内容，适合快速了解未知页面的完整结构。
-- `/scroll` 到底部会触发懒加载，使未进入视口的图片完成加载。提取图片 URL 前若未滚动，部分图片可能尚未加载。
-- 拿到媒体资源 URL 后，公开资源可直接下载到本地后用读取；需要登录态才可获取的资源才需要在浏览器内 navigate + screenshot。
-- 短时间内密集打开大量页面（如批量 `/new`）可能触发网站的反爬风控。
-- 平台返回的"内容不存在""页面不见了"等提示不一定反映真实状态，也可能是访问方式的问题（如 URL 缺失必要参数、触发反爬）而非内容本身的问题。
-
-### 视频内容获取
-
-用户 Chrome 真实渲染，截图可捕获当前视频帧。核心能力：通过 `/eval` 操控 `<video>` 元素（获取时长、seek 到任意时间点、播放/暂停/全屏），配合 `/screenshot` 采帧，可对视频内容进行离散采样分析。
+- **程序化 vs GUI**：eval/构造 URL 速度快但可能触发反爬；click/fill 等 GUI 操作是为人设计的，确定性最高。程序化受阻时，GUI 交互是可靠兜底。
+- **站点内 URL 可靠性**：DOM 中的 href 天然携带完整上下文，手动构造 URL 可能缺失隐式参数。优先从 DOM 提取链接。
+- **隐藏内容**：页面中存在大量已加载但未展示的 DOM 内容（轮播、折叠、懒加载），eval 可直接触达。
+- **Shadow DOM / iframe**：eval 递归遍历可穿透这些边界。
+- **滚动触发加载**：scroll 到底部触发懒加载，提取内容前确保已滚动。
+- **部分元素不在可访问性树中**：某些 UI 框架渲染的元素不出现在 snapshot 中，改用 eval 查询 DOM。
 
 ### 登录判断
 
-用户日常 Chrome 天然携带登录态，大多数常用网站已登录。
+用户日常 Chrome 天然携带登录态。打开页面后先尝试操作，只有确认需要登录才提示用户：
 
-登录判断的核心问题只有一个：**目标内容拿到了吗？**
-
-打开页面后先尝试获取目标内容。只有当确认**目标内容无法获取**且判断登录能解决时，才告知用户：
-
-> "当前页面在未登录状态下无法获取[具体内容]，请在你的 Chrome 中登录 [网站名]，完成后告诉我继续。"
-
-登录完成后无需重启任何东西，直接刷新页面继续。
+> "当前页面需要登录才能操作，请在你的 Chrome 中登录 [网站名]，完成后告诉我继续。"
 
 ### 任务结束
 
-用 `/close` 关闭自己创建的 tab，必须保留用户原有的 tab 不受影响。
+关闭自己创建的 tab，保留用户原有 tab 不受影响。Proxy 持续运行，不主动停止。
 
-Proxy 持续运行，不建议主动停止——重启后需要在 Chrome 中重新授权 CDP 连接。
+## Workflow 系统
 
-## 并行调研：子 Agent 分治策略
+### 文件结构
 
-任务包含多个**独立**调研目标时（如同时调研 N 个项目、N 个来源），鼓励合理分治给子 Agent 并行执行，而非主 Agent 串行处理。
+Workflow 存储在 `workflows/` 下，每个文件一个 workflow：
 
-**好处：**
+```markdown
+---
+name: workflow 名称
+description: 一句话描述
+domain: 适用站点
+params:                    # 可选：workflow 参数
+  - name: param_name
+    description: 参数说明
+    required: true
+created: 2026-03-27
+updated: 2026-03-27
+---
 
-- **速度**：多子 Agent 并行，总耗时约等于单个子任务时长
-- **上下文保护**：抓取内容不进入主 Agent 上下文，主 Agent 只接收摘要，节省 token
+# workflow 名称
 
-**并行 CDP 操作**：每个子 Agent 在当前用户浏览器实例中，自行创建所需的后台 tab（`/new`），自行操作，任务结束自行关闭（`/close`）。所有子 Agent 共享一个 Chrome、一个 Proxy，通过不同 targetId 操作不同 tab，无竞态风险。
+## 前置条件
+- 已登录 xxx
+- 需要准备的素材/数据
 
-**子 Agent Prompt 写法：目标导向，而非步骤指令**
+## Steps
 
-- 必须在子 Agent prompt 中写 `必须加载 web-access skill 并遵循指引` ，子 Agent 会自动加载 skill，无需在 prompt 中复制 skill 内容或指定路径。
-- 子 Agent 有自主判断能力。主 Agent 的职责是说清楚**要什么**，仅在必要与确信时限定**怎么做**。过度指定步骤会剥夺子 Agent 的判断空间，反而引入主 Agent 的假设错误。**避免 prompt 用词对子 Agent 行为的暗示**：「搜索 xx」会把子 Agent 锚定到 WebSearch，而实际上有些反爬站点需要 CDP 直接访问主站才能有效获取内容。主 Agent 写 prompt 时应描述目标（「获取」「调研」「了解」），避免用暗示具体手段的动词（「搜索」「抓取」「爬取」）。
+### Step 1: 步骤名称
+**command**: `agent-browser 具体命令`
+**description**: 自然语言描述这一步做什么，当 command 失败时 AI 根据这段描述 + 当前页面状态自主完成
+**verify**: 成功条件（URL 包含 xxx、页面出现"xxx"文字、某元素可见）
 
-**分治判断标准：**
+### Step 2: 步骤名称
+**command**: `agent-browser 具体命令`
+**description**: 自然语言描述
+**verify**: 验证条件
+```
 
-| 适合分治                                 | 不适合分治                               |
-| ---------------------------------------- | ---------------------------------------- |
-| 目标相互独立，结果互不依赖               | 目标有依赖关系，下一个需要上一个的结果   |
-| 每个子任务量足够大（多页抓取、多轮搜索） | 简单单页查询，分治开销大于收益           |
-| 需要 CDP 浏览器或长时间运行的任务        | 几次 WebSearch / Jina 就能完成的轻量查询 |
+模板文件：`workflows/_template.md`
 
-## 信息核实类任务
+### 创建 workflow
 
-核实的目标是**一手来源**，而非更多的二手报道。多个媒体引用同一个错误会造成循环印证假象。
+用户说"创建 workflow"或描述一个需要沉淀的操作流程时，进入创建模式：
 
-搜索引擎和聚合平台是信息发现入口，是**定位**信息的工具，不可用于直接**证明**真伪。找到来源后，直接访问读取原文。同一原则适用于工具能力/用法的调研——官方文档是一手来源，不确定时先查文档或源码，不猜测。
+**① 明确目标** — 确认：
+- workflow 名称（英文短横线命名，如 `qianniu-upload-material`）
+- 适用场景和目标网站
+- 前置条件（登录态、素材准备等）
+- 是否需要参数化（每次执行时变化的输入，如文件路径、文本内容）
 
-| 信息类型      | 一手来源          |
-| ------------- | ----------------- |
-| 政策/法规     | 发布机构官网      |
-| 企业公告      | 公司官方新闻页    |
-| 学术声明      | 原始论文/机构官网 |
-| 工具能力/用法 | 官方文档、源码    |
+**② 逐步走通** — 在浏览器中一步步操作，每完成一步记录：
+- `command`：实际执行成功的 agent-browser / CDP 命令
+- `description`：这一步在做什么、目标是什么（要足够详细，AI 兜底时靠它理解意图）
+- `verify`：如何判断这一步成功了（尽量用客观可检测的条件：URL 变化、元素出现、文本包含）
 
-**找不到官网时**：权威媒体的原创报道（非转载）可作为次级依据，但需向用户说明："未找到官方原文，以下核实来自[媒体名]报道，存在转述误差可能。"单一来源时同样向用户声明。
+**③ 保存文件** — 全部走通后写入 `workflows/{name}.md`
+
+**创建时的原则：**
+- 每一步都必须实际在浏览器中验证通过，不凭想象写命令
+- description 要写给"不了解这个页面的 AI"看——不能假设它知道页面布局
+- verify 条件要客观可检测，避免模糊描述
+- 如果某些元素不在可访问性树中（snapshot 找不到），在 description 中注明，并在 command 中用 eval 方式操作
+
+### 执行 workflow
+
+用户要求执行某个 workflow 时：
+
+**① 准备** — 读取 workflow 文件，确认前置条件，收集所需参数
+
+**② 逐步执行** — 按 step 顺序执行，每步遵循：
+
+```
+command 成功 → verify 通过 → 下一步
+command 失败 ──┐
+verify 不通过 ─┤→ AI 读取 description + snapshot 当前页面 → 自主操作 → 再 verify
+```
+
+**③ 兜底恢复** — 当 command 失败或 verify 不通过时：
+1. 重新 `snapshot` 获取当前页面状态
+2. 对照 description 理解这一步的目标
+3. 根据实际页面结构自主决定操作方式（点击其他元素、用 eval 操作 DOM 等）
+4. 操作后再次 verify
+
+**④ 完成确认** — 所有 step 完成后，确认最终状态符合预期
+
+**执行时的原则：**
+- 不要跳过任何 step，即使看起来"已经在正确位置"
+- 每一步的 verify 必须通过才能进入下一步
+- 兜底时不要盲目重试同一个命令，要看页面实际状态再决定
+- 如果某个 step 连续兜底 3 次仍失败，停下来向用户报告当前状态
+
+### 更新 workflow
+
+两种触发场景：
+
+**执行中自动更新** — workflow 执行时某个 step 的 command 失败但通过兜底修复成功了：
+- 将兜底时实际有效的操作更新为该 step 的新 command
+- 更新 frontmatter 的 `updated` 日期
+
+**手动重新创建** — 页面改版导致多个 step 失效时：
+- 建议用户重新走一遍创建流程
+- 保留旧文件（标注 `deprecated: true`），创建新版本
+
+### 列出 workflow
+
+用户问"有哪些 workflow"时：
+
+```bash
+ls ${CLAUDE_SKILL_DIR}/workflows/*.md | grep -v _template
+```
+
+读取每个文件的 frontmatter，展示：名称、描述、适用域名、最后更新日期。
+
+### 删除 workflow
+
+用户要求删除时，确认 workflow 名称后删除文件。如果不确定，标注 `deprecated: true` 而非直接删除。
+
+## 并行执行
+
+当一个 workflow 的多个 step 相互独立时（如同时打开多个页面提取数据），可以分发给子 Agent 并行执行。
+
+每个子 Agent 自行创建后台 tab（`/new`），自行操作，任务结束自行关闭（`/close`）。所有子 Agent 共享一个 Chrome、一个 Proxy，通过不同 targetId 操作不同 tab，无竞态风险。
+
+子 Agent prompt 中必须写 `必须加载 auto-flow skill 并遵循指引`，说清楚**要什么**（目标），而非**怎么做**（步骤）。
 
 ## 站点经验
 
@@ -259,119 +251,31 @@ Proxy 持续运行，不建议主动停止——重启后需要在 Chrome 中重
 
 已有经验的站点：!`ls ${CLAUDE_SKILL_DIR}/references/site-patterns/ 2>/dev/null | sed 's/\.md$//' || echo "暂无"`
 
-确定目标网站后，如果上方列表中有匹配的站点，必须读取对应文件获取先验知识（平台特征、有效模式、已知陷阱）。经验内容标注了发现日期，当作可能有效的提示而非保证——如果按经验操作失败，回退通用模式并更新经验文件。
-
-CDP 操作成功完成后，如果发现了有必要记录经验的新站点或新模式（URL 结构、平台特征、操作策略），主动写入对应的站点经验文件。只写经过验证的事实，不写未确认的猜测。
+确定目标网站后，如果有匹配的站点经验，必须读取对应文件获取先验知识。操作成功后，如果发现了值得记录的新模式，主动写入站点经验文件。
 
 文件格式：
 
 ```markdown
 ---
 domain: example.com
-aliases: [示例，Example]
-updated: 2026-03-19
+aliases: [示例, Example]
+updated: 2026-03-27
 ---
-
 ## 平台特征
-
-架构、反爬行为、登录需求、内容加载方式等事实
+架构、反爬行为、登录需求、内容加载方式等
 
 ## 有效模式
-
 已验证的 URL 模式、操作策略、选择器
 
 ## 已知陷阱
-
-什么会失败以及为什么
+什么会失败以及为什么（标注发现日期）
 ```
-
-经验/陷阱内容标注发现日期，当作"可能有效的提示"而非"保证正确的事实"。
-
-## Workflow：可复用的操作流程
-
-将通过对话验证过的浏览器操作流程沉淀为 workflow 文件，后续可直接调用执行。
-
-### 核心机制：命令优先，自然语言兜底
-
-每个 step 同时记录 **agent-browser CLI 命令** 和 **自然语言描述**：
-
-1. **执行命令** — 先跑 `command` 字段的精确命令，速度快、确定性高
-2. **验证结果** — 用 `verify` 条件判断是否成功
-3. **兜底处理** — 命令失败或验证不通过时，AI 根据 `description` + 当前页面状态自主判断如何完成这一步
-
-```
-command 成功 → verify 通过 → 下一步
-command 失败 ──┐
-verify 不通过 ─┤→ AI 读取 description + snapshot → 自主操作 → 再 verify
-```
-
-### 创建 workflow
-
-用户说"创建 workflow"或描述一个需要沉淀的操作流程时，进入创建模式：
-
-1. **明确目标** — 确认 workflow 名称、适用场景、前置条件
-2. **逐步走通** — 通过对话一步步操作页面，每完成一步记录：
-   - `command`：实际执行成功的 agent-browser 命令
-   - `description`：这一步在做什么、目标是什么
-   - `verify`：如何判断这一步成功了
-3. **保存文件** — 全部走通后写入 `workflows/{name}.md`，格式参考 `workflows/_template.md`
-
-### 执行 workflow
-
-用户要求执行某个 workflow 时：
-
-1. 读取 workflow 文件，确认前置条件
-2. 按 step 顺序执行，每步遵循「命令 → 验证 → 兜底」机制
-3. 兜底时必须重新 `snapshot` 获取当前页面状态，再根据 description 判断操作
-4. 所有 step 完成后，确认最终状态符合预期
-
-### 列出 workflow
-
-用户问"有哪些 workflow"时：
-
-```bash
-ls workflows/*.md | grep -v _template
-```
-
-读取每个文件的 frontmatter，展示名称、描述、适用域名。
-
-### workflow 文件格式
-
-存储在 `workflows/` 下，每个文件一个 workflow：
-
-```markdown
----
-name: workflow 名称
-description: 一句话描述
-domain: 适用站点
-created: 创建日期
-updated: 最后更新日期
----
-
-# workflow 名称
-
-## 前置条件
-- 需要满足的条件
-
-## Steps
-
-### Step 1: 步骤名称
-**command**: `agent-browser 具体命令`
-**description**: 自然语言描述这一步做什么
-**verify**: 成功条件
-```
-
-### 维护
-
-- workflow 执行失败且通过兜底修复后，更新对应 step 的 command
-- 页面改版导致多个 step 失效时，建议重新走一遍创建流程
-- 过时的 workflow 标注 `deprecated: true` 而非删除
 
 ## References 索引
 
-| 文件                                   | 何时加载                                       |
-| -------------------------------------- | ---------------------------------------------- |
-| `references/cdp-api.md`                | 需要 CDP API 详细参考、JS 提取模式、错误处理时 |
-| `references/site-patterns/{domain}.md` | 确定目标网站后，读取对应站点经验               |
-| `references/agent-browser.md`          | 使用 agent-browser 时，读取连接和操作踩坑经验  |
-| `workflows/_template.md`              | 创建新 workflow 时，参考模板格式               |
+| 文件 | 何时加载 |
+|------|---------|
+| `references/cdp-api.md` | 需要 CDP Proxy API 详细参考时 |
+| `references/agent-browser.md` | agent-browser 连接或操作遇到问题时 |
+| `references/site-patterns/{domain}.md` | 确定目标网站后，读取对应站点经验 |
+| `workflows/_template.md` | 创建新 workflow 时，参考模板格式 |
