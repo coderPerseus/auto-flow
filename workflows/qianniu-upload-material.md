@@ -1,6 +1,6 @@
 ---
 name: 千牛上传素材
-description: 打开千牛后台素材中心，上传本地文件到我的图片/视频
+description: 上传本地图片到千牛素材中心和商品发布页，完成 AI 智能发品
 domain: myseller.taobao.com
 params:
   - name: files
@@ -8,7 +8,7 @@ params:
     required: true
     example: ["/path/to/image1.png", "/path/to/image2.jpg"]
 created: 2026-03-27
-updated: 2026-03-27
+updated: 2026-03-30
 ---
 
 # 千牛上传素材
@@ -18,40 +18,148 @@ updated: 2026-03-27
 - 已在 Chrome 中登录千牛后台（淘宝卖家账号）
 - 准备好要上传的本地文件路径
 
+## 性能优化说明
+
+- **全程使用 CDP Proxy**，不使用 agent-browser（避免 snapshot 开销和超时风险）
+- **直达 URL**，跳过菜单逐级导航
+- **并行打开 tab**，素材中心和发布页同时加载
+- **并行上传**，两个 tab 同时上传文件，等待最长分支完成
+- **合并 eval**，多步 DOM 操作合并为单次原子调用
+- **内联 verify**，command 末尾自带验证，减少 tool call 轮次
+- **无固定 sleep**，依赖 CDP `/new` 内置的 readyState 等待
+
 ## Steps
 
-### Step 1: 打开千牛后台并检测登录状态
+### Step 1: 并行打开素材中心和发布页
 
-**command**: `agent-browser open "https://myseller.taobao.com/home.htm/QnworkbenchHome/"`
-**description**: 打开千牛商家工作台首页。如果未登录，页面会重定向到包含 `login` 的 URL。检测到重定向时终止 workflow，提示用户先登录。
-**verify**: URL 包含 `myseller.taobao.com`，不包含 `login`
+**command**:
+```bash
+eval $(bash ${CLAUDE_SKILL_DIR}/scripts/open-tabs.sh \
+  "MATERIAL_ID|https://myseller.taobao.com/home.htm/material-center/mine-material/sucai-tu" \
+  "PUBLISH_ID|https://upload.taobao.com/auction/sell.jhtml")
+```
+**description**: 使用 `open-tabs.sh` 脚本并行打开素材中心和发布页。脚本自动验证每个 targetId 对应的 URL（通过域名关键词+路径段匹配），输出 `MATERIAL_ID=xxx` 和 `PUBLISH_ID=xxx` 变量，消除 shell 并发返回顺序不确定导致的 ID 互换风险。
+**verify**: 两个 tab 均已打开。素材中心 URL 包含 `/mine-material`；发布页标题为"商品发布"，URL 包含 `item.upload.taobao.com`。如果素材中心 URL 包含 `login`，终止 workflow 提示用户登录。
 
-### Step 2: 点击侧边栏"商品"
+### Step 2: 并行上传文件到两个 tab
 
-**command**: `agent-browser eval 'const t=[...document.querySelectorAll("a")].find(a=>a.textContent.trim()==="商品");if(t){t.click();"ok"}else{"not found"}'`
-**description**: 在左侧导航栏找到"商品"菜单项并点击，展开商品相关的子导航。侧边栏不在可访问性树中，需要通过 eval 查询 DOM 操作。
-**verify**: URL 包含 `/SellManage` 或页面出现"素材中心"子菜单
+**command**:
+```bash
+# 分支 A：素材中心上传 → 关弹窗 → 关 tab
+(
+  # 点击"上传文件"
+  curl -s -X POST "http://localhost:3456/eval?target=MATERIAL_ID" \
+    -d '(function(){ var btns=[].slice.call(document.querySelectorAll("button,a,span,div")); for(var i=0;i<btns.length;i++){if(btns[i].textContent.trim().indexOf("上传文件")>=0){btns[i].click(); return "clicked"}} return "not found" })()'
 
-### Step 3: 点击"素材中心"
+  sleep 2
 
-**command**: `agent-browser eval 'const t=[...document.querySelectorAll("a,span,div")].find(e=>e.textContent.trim()==="素材中心");if(t){t.click();"ok"}else{"not found"}'`
-**description**: 在商品子导航中找到"素材中心"并点击，进入素材管理页面。
-**verify**: URL 包含 `/material-center`
+  # setFiles 上传
+  printf '{"selector":"#sucai-tu-upload-pannel input[type=file]","files":["文件路径"]}' \
+    | curl -s -X POST "http://localhost:3456/setFiles?target=MATERIAL_ID" -d @-
 
-### Step 4: 点击"我的图片/视频" tab
+  sleep 3
 
-**command**: `agent-browser eval '(() => { const tabs = document.querySelectorAll("[role=tab]"); for (const t of tabs) { if (t.textContent.includes("我的图片/视频")) { t.click(); return "clicked"; } } return "not found"; })()'`
-**description**: 在素材中心顶部 tab 栏中点击"我的图片/视频"，切换到个人素材管理视图。该 tab 在可访问性树中可见，但通过 @ref 点击可能不生效（SPA 路由未切换），用 eval 直接查找 role=tab 元素点击更可靠。
-**verify**: URL 包含 `/mine-material`
+  # 关闭"上传结果"弹窗
+  curl -s -X POST "http://localhost:3456/eval?target=MATERIAL_ID" \
+    -d '(function(){ var btn=[].slice.call(document.querySelectorAll("button,span")).find(function(b){return b.textContent.trim()==="完成"}); if(btn){btn.click(); return "ok"} return "not found" })()'
 
-### Step 5: 点击"上传文件"按钮
+  # 关闭素材中心 tab
+  curl -s "http://localhost:3456/close?target=MATERIAL_ID"
+) &
 
-**command**: `agent-browser click "button:has-text('上传文件')"`
-**description**: 点击页面中的"上传文件"按钮，弹出上传素材的对话框。
-**verify**: 页面出现上传弹窗（包含"上传素材"标题或文件拖拽区域）
+# 分支 B：发布页上传 → 等 AI 识别
+(
+  # 点击"从本地上传"
+  curl -s -X POST "http://localhost:3456/eval?target=PUBLISH_ID" \
+    -d '(function(){ var btns=[].slice.call(document.querySelectorAll("button")); for(var i=0;i<btns.length;i++){var t=btns[i].textContent.trim(); if(t.indexOf("从本地上传")>=0){btns[i].click(); return "clicked"}} return "not found" })()'
 
-### Step 6: 上传本地文件
+  sleep 1
 
-**command**: `CDP /setFiles — selector="#sucai-tu-upload-pannel input[type=file]"，files 从 workflow 参数获取`
-**description**: 上传弹窗中有一个 id="sucai-tu-upload" 的上传区域（文案"点击/拖拽，批量导入文件"）。不要点击该按钮（会弹出系统文件对话框，无法自动化）。该区域的 file input 实际位于 `#sucai-tu-upload-pannel` 容器内（注意不是 `#sucai-tu-upload`），input 的 id 是动态生成的，用父容器选择器 `#sucai-tu-upload-pannel input[type=file]` 定位。通过 CDP Proxy 的 `/setFiles` 接口直接设置文件路径，绕过对话框。accept 类型为 jpeg/bmp/gif/heic/png/webp，支持 multiple。文件路径从 workflow 参数 `files` 获取。示例：`curl -s -X POST "http://localhost:3456/setFiles?target=ID" -d '{"selector":"#sucai-tu-upload-pannel input[type=file]","files":["路径"]}'`
-**verify**: 页面出现"上传结果"弹窗，显示文件名和上传完成状态
+  # setFiles 上传
+  printf '{"selector":"input[type=file]","files":["文件路径"]}' \
+    | curl -s -X POST "http://localhost:3456/setFiles?target=PUBLISH_ID" -d @-
+
+  # 等待 AI 识别完成
+  sleep 5
+) &
+
+wait
+echo "--- parallel upload done ---"
+
+# 验证发布页状态
+curl -s -X POST "http://localhost:3456/eval?target=PUBLISH_ID" \
+  -d '(function(){ return JSON.stringify({uploadSuccess: document.body.innerText.indexOf("上传成功")>=0, confirmBtn: document.body.innerText.indexOf("确认")>=0 && document.body.innerText.indexOf("下一步")>=0}); })()'
+```
+**description**: 两个 tab 并行上传文件。分支 A（素材中心）：点击"上传文件"→ sleep 2s 等弹窗渲染（1s 不够，file input 可能未出现）→ setFiles → 等上传完成 → 关弹窗 → 关 tab。分支 B（发布页）：点击"从本地上传"→ sleep 1s → setFiles → sleep 5s 等 AI 识别。文件路径从参数 `files` 获取。**注意**：文件路径可能含特殊字符，必须用 `printf` 管道传递 JSON。按钮匹配用 `indexOf` 而非 `===`，因为按钮文本可能有额外空白或嵌套元素。
+**verify**: 发布页出现绿色"上传成功"提示文字，"确认，下一步"按钮可见。素材中心 tab 已关闭。
+
+### Step 3: 发布页点击第一次"确认，下一步"
+
+**command**:
+```bash
+# 点击 → 等页面切换 → 验证
+curl -s -X POST "http://localhost:3456/eval?target=PUBLISH_ID" \
+  -d '(function(){ var btns = document.querySelectorAll("button"); for (var i = 0; i < btns.length; i++) { if (btns[i].textContent.trim().indexOf("确认") >= 0 && btns[i].textContent.trim().indexOf("下一步") >= 0) { btns[i].scrollIntoView({block:"center"}); btns[i].click(); return "clicked"; } } return "not found"; })()'
+
+sleep 3
+
+curl -s -X POST "http://localhost:3456/eval?target=PUBLISH_ID" \
+  -d '(function(){ return JSON.stringify({hasBrand: document.body.innerText.indexOf("品牌")>=0, hasConfirm: document.body.innerText.indexOf("确认")>=0, url: window.location.href}); })()'
+```
+**description**: 图片上传且 AI 处理完成后，点击"确认，下一步"进入图片属性页。此页面包含品牌选择器、1:1/3:4主图上传位、详情描述等。URL 仍为 `category.htm`，内容通过 AJAX 更新。
+**verify**: 页面切换到图片属性页，可见"品牌"字段、1:1主图和3:4主图上传区域、"确认，下一步"按钮。
+
+### Step 4: 选择品牌
+
+**command**:
+```bash
+# 4a: 点击品牌下拉框
+curl -s -X POST "http://localhost:3456/eval?target=PUBLISH_ID" \
+  -d '(function(){ var inputs = document.querySelectorAll("input"); if(inputs.length<2) return "brand input not found"; inputs[1].click(); return "brand dropdown opened"; })()'
+
+sleep 1
+
+# 4b: 搜索"无品牌" + 选择（合并为一次 eval，内置 200ms 延迟等过滤结果）
+curl -s -X POST "http://localhost:3456/eval?target=PUBLISH_ID" \
+  -d '(function(){
+    var inputs = document.querySelectorAll("input");
+    var searchInput = inputs[2];
+    if (!searchInput) return "search input not found";
+    searchInput.focus();
+    var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    setter.call(searchInput, "\u65E0\u54C1\u724C");
+    searchInput.dispatchEvent(new Event("input", {bubbles: true}));
+    return "searched";
+  })()'
+
+sleep 1
+
+curl -s -X POST "http://localhost:3456/eval?target=PUBLISH_ID" \
+  -d '(function(){
+    var items = document.querySelectorAll(".options-item, li");
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].textContent.trim().indexOf("\u65E0\u54C1\u724C") >= 0) {
+        items[i].click();
+        return "brand selected";
+      }
+    }
+    return "brand option not found";
+  })()'
+```
+**description**: 在图片属性页选择品牌。品牌是必填字段（标红星 *），不填则"确认，下一步"静默失败。品牌下拉框结构：主输入框（input[1]，placeholder 可能为"请选择"或"请输入"）→ 下拉搜索框（input[2]）→ 选项列表（.options-item 或 li）。搜索框必须用 React 兼容的 nativeInputValueSetter + input 事件触发过滤。默认选择"无品牌"。注意：3 步操作之间需要 sleep 等待 DOM 异步更新，无法合并为单次 eval。
+**verify**: 品牌输入框显示"无品牌"文本
+
+### Step 5: 点击第二次"确认，下一步"进入编辑表单
+
+**command**:
+```bash
+curl -s -X POST "http://localhost:3456/eval?target=PUBLISH_ID" \
+  -d '(function(){ var btns = document.querySelectorAll("button"); for (var i = 0; i < btns.length; i++) { if (btns[i].textContent.trim().indexOf("确认") >= 0 && btns[i].textContent.trim().indexOf("下一步") >= 0) { btns[i].scrollIntoView({block:"center"}); btns[i].click(); return "clicked"; } } return "not found"; })()'
+
+sleep 3
+
+curl -s -X POST "http://localhost:3456/eval?target=PUBLISH_ID" \
+  -d '(function(){ return JSON.stringify({url: window.location.href, hasForm: document.body.innerText.indexOf("基础信息")>=0 || document.body.innerText.indexOf("销售信息")>=0}); })()'
+```
+**description**: 品牌已选、图片已上传，点击"确认，下一步"跳转到完整编辑表单。
+**verify**: URL 变为 `item.upload.taobao.com/sell/v2/publish.htm`，页面包含基础信息、销售信息、物流服务等表单区块

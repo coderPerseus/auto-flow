@@ -101,28 +101,8 @@ function checkPort(port) {
   });
 }
 
-async function getWebSocketUrl(port, wsPath) {
+function getWebSocketUrl(port, wsPath) {
   if (wsPath) return `ws://127.0.0.1:${port}${wsPath}`;
-  // For --remote-debugging-port launched Chrome, fetch the full WebSocket URL
-  // from /json/version which includes the required browser UUID
-  try {
-    const url = await new Promise((resolve, reject) => {
-      http.get(`http://127.0.0.1:${port}/json/version`, { timeout: 3000 }, (res) => {
-        let data = '';
-        res.on('data', c => data += c);
-        res.on('end', () => {
-          try {
-            const json = JSON.parse(data);
-            resolve(json.webSocketDebuggerUrl || null);
-          } catch { resolve(null); }
-        });
-      }).on('error', () => resolve(null));
-    });
-    if (url) {
-      console.log(`[CDP Proxy] 从 /json/version 获取 WebSocket URL`);
-      return url;
-    }
-  } catch { /* fall through */ }
   return `ws://127.0.0.1:${port}/devtools/browser`;
 }
 
@@ -149,7 +129,7 @@ async function connect() {
     chromeWsPath = discovered.wsPath;
   }
 
-  const wsUrl = await getWebSocketUrl(chromePort, chromeWsPath);
+  const wsUrl = getWebSocketUrl(chromePort, chromeWsPath);
   if (!wsUrl) throw new Error('无法获取 Chrome WebSocket URL');
 
   return connectingPromise = new Promise((resolve, reject) => {
@@ -324,6 +304,14 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify(resp.result));
     }
 
+    // GET /activate?target=xxx - 激活并置前自己的 tab
+    else if (pathname === '/activate') {
+      await sendCDP('Target.activateTarget', { targetId: q.target });
+      const sid = await ensureSession(q.target);
+      await sendCDP('Page.bringToFront', {}, sid);
+      res.end(JSON.stringify({ success: true, targetId: q.target }));
+    }
+
     // GET /navigate?target=xxx&url=yyy - 导航（自动等待加载）
     else if (pathname === '/navigate') {
       const sid = await ensureSession(q.target);
@@ -494,10 +482,18 @@ const server = http.createServer(async (req, res) => {
     else if (pathname === '/screenshot') {
       const sid = await ensureSession(q.target);
       const format = q.format || 'png';
-      const resp = await sendCDP('Page.captureScreenshot', {
+      const captureOpts = {
         format,
         quality: format === 'jpeg' ? 80 : undefined,
-      }, sid);
+      };
+      // 支持 clip 参数实现元素级截图: ?clip=x,y,width,height
+      if (q.clip) {
+        const [x, y, width, height] = q.clip.split(',').map(Number);
+        if ([x, y, width, height].every(v => !isNaN(v))) {
+          captureOpts.clip = { x, y, width, height, scale: q.scale ? Number(q.scale) : 1 };
+        }
+      }
+      const resp = await sendCDP('Page.captureScreenshot', captureOpts, sid);
       if (q.file) {
         fs.writeFileSync(q.file, Buffer.from(resp.result.data, 'base64'));
         res.end(JSON.stringify({ saved: q.file }));
@@ -526,6 +522,7 @@ const server = http.createServer(async (req, res) => {
           '/targets': 'GET - 列出所有页面 tab',
           '/new?url=': 'GET - 创建新后台 tab（自动等待加载）',
           '/close?target=': 'GET - 关闭 tab',
+          '/activate?target=': 'GET - 激活并置前 tab',
           '/navigate?target=&url=': 'GET - 导航（自动等待加载）',
           '/back?target=': 'GET - 后退',
           '/info?target=': 'GET - 页面标题/URL/状态',

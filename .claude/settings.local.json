@@ -6,7 +6,22 @@
       "Bash(agent-browser get:*)",
       "Bash(agent-browser snapshot:*)",
       "Bash(agent-browser click:*)",
-      "Bash(agent-browser screenshot:*)"
+      "Bash(agent-browser screenshot:*)",
+      "Bash(curl -s http://localhost:3456/targets)",
+      "Bash(agent-browser tab:*)",
+      "Bash(curl:*)",
+      "Bash(git log:*)",
+      "Bash(bash /Users/luckysnail/code/skills/auto-flow/scripts/check-deps.sh)",
+      "Bash(bash /Users/luckysnail/code/skills/auto-flow/scripts/check-ai-config.sh)",
+      "Bash(TARGET=\"434217001AD52DD9841DF01FBCEDE2E3\")",
+      "Bash(TARGET=\"2506FC1229182B2F2213E087E2FEDF94\")",
+      "Bash(TARGET=\"AC5DD2CD6C9FCA558F80D3C9125AAE22\")",
+      "Bash(TARGET=\"E451DFDD768E87F8FF16AFF51015735C\")",
+      "Bash(curl -s -X POST \"http://localhost:3456/eval?target=$TARGET\" -d '[...document.querySelectorAll\\(\"\"button,label,[role=button]\"\"\\)].map\\(e=>e.className\\).filter\\(Boolean\\).join\\(\"\"\\\\n\"\"\\)')",
+      "Bash(curl -s -X POST \"http://localhost:3456/eval?target=$TARGET\" -d 'JSON.stringify\\([...document.querySelectorAll\\(\"\"button\"\"\\)].slice\\(0,15\\).map\\(b=>\\({label:b.getAttribute\\(\"\"aria-label\"\"\\),text:b.textContent.trim\\(\\).slice\\(0,20\\)}\\)\\)\\)')",
+      "Bash(curl -s -X POST \"http://localhost:3456/eval?target=$TARGET\" --data-urlencode 'expr=document.querySelector\\(\"\"#prompt-textarea\"\"\\).tagName')",
+      "Bash(curl -s -X POST \"http://localhost:3456/eval?target=$TARGET\" -d 'JSON.stringify\\([...document.querySelectorAll\\(\"\"button\"\"\\)].slice\\(15,30\\).map\\(b=>\\({label:b.getAttribute\\(\"\"aria-label\"\"\\),text:b.textContent.trim\\(\\).slice\\(0,20\\)}\\)\\)\\)')",
+      "Bash(curl -s -X POST \"http://localhost:3456/eval?target=$TARGET\" -d 'document.documentElement.innerHTML.slice\\(0,2000\\)')"
     ]
   }
 }

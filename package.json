@@ -1,0 +1,24 @@
+{
+  "name": "auto-flow",
+  "version": "1.0.0",
+  "description": "基于 agent-browser 和 CDP 的浏览器 workflow 自动化 skill。",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/coderPerseus/auto-flow.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/coderPerseus/auto-flow/issues"
+  },
+  "homepage": "https://github.com/coderPerseus/auto-flow#readme",
+  "dependencies": {
+    "turndown": "^7.2.2"
+  }
+}
