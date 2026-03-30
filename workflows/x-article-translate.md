@@ -44,6 +44,24 @@ updated: 2026-03-30
 - `scripts/x-article/download-image.mjs` - 图片下载到本地临时目录
 - `scripts/x-article/config-translation.mjs` - 初始化 / 读取翻译供应商、模型与 API key 偏好
 - `scripts/x-article/translate-article.mjs` - 分析文章主题、生成系统提示词、调用模型完成翻译
+- `scripts/x-article/export-and-translate.mjs` - 统一入口：先导出原文 Markdown，再直接翻译
+
+## 推荐入口
+
+如果要直接“一条命令完成导出 + 翻译”，优先使用：
+
+```bash
+node ${SKILL_DIR}/scripts/x-article/export-and-translate.mjs "${URL}" \
+  [--output "${OUTPUT}"] \
+  [--translated-output "${TRANSLATED_OUTPUT}"] \
+  [--picgo-config "${PICGO_CONFIG}"] \
+  [--provider "${PROVIDER}"] \
+  [--model "${MODEL}"] \
+  [--target-language "${TARGET_LANGUAGE:-中文}"] \
+  [--translation-prompt "${TRANSLATION_PROMPT}"]
+```
+
+首次执行时，如果还没有 `~/.config/x-article-translate/config.json`，脚本会在翻译阶段自动进入偏好初始化流程。
 
 ## Steps
 
@@ -434,6 +452,29 @@ grep -n "^source:" "${TRANSLATED_OUTPUT}"
 必要时人工 spot check 2-3 个技术段落，确认术语一致性。
 
 **verify**: 译文 Markdown 结构完整，图片和链接保持可用，正文为目标语言
+
+### Step 15: 使用统一入口串联执行
+
+**command**:
+```bash
+node ${SKILL_DIR}/scripts/x-article/export-and-translate.mjs "${URL}" \
+  [--output "${OUTPUT}"] \
+  [--translated-output "${TRANSLATED_OUTPUT}"] \
+  [--picgo-config "${PICGO_CONFIG}"] \
+  [--provider "${PROVIDER}"] \
+  [--model "${MODEL}"] \
+  [--target-language "${TARGET_LANGUAGE:-中文}"] \
+  [--translation-prompt "${TRANSLATION_PROMPT}"]
+```
+**description**:
+这个脚本会按顺序执行：
+1. `export-article-markdown.mjs` 导出原文 Markdown
+2. `translate-article.mjs` 读取原文 Markdown 并完成翻译
+3. 返回原文文件路径、译文文件路径、供应商、模型、目标语言和文章分析结果
+
+对调用方来说，这就是 workflow 的推荐程序化入口。
+
+**verify**: 返回 JSON 中同时包含 `markdown` 和 `translated_markdown`
 
 ## 注意事项
 
