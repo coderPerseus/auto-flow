@@ -50,17 +50,23 @@ function findPicGoConfig() {
 
   if (platform === 'darwin') {
     candidates.push(
+      path.join(home, 'Library/Application Support', 'picgo', 'data.json'),
+      path.join(home, 'Library/Application Support', 'picgo', 'data.bak.json'),
       path.join(home, '.picgo', 'config.json'),
       path.join(home, 'Library/Application Support/picgo', 'config.json'),
     );
   } else if (platform === 'win32') {
     candidates.push(
+      path.join(home, 'AppData', 'Roaming', 'picgo', 'data.json'),
+      path.join(home, 'AppData', 'Roaming', 'picgo', 'data.bak.json'),
       path.join(home, '.picgo', 'config.json'),
       path.join(home, 'AppData', 'Roaming', 'picgo', 'config.json'),
     );
   } else {
     // Linux
     candidates.push(
+      path.join(home, '.config', 'picgo', 'data.json'),
+      path.join(home, '.config', 'picgo', 'data.bak.json'),
       path.join(home, '.picgo', 'config.json'),
       path.join(home, '.config', 'picgo', 'config.json'),
     );

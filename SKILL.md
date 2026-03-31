@@ -32,6 +32,7 @@ bash ${CLAUDE_SKILL_DIR}/scripts/check-deps.sh
 | 千牛上传素材        | 打开千牛后台素材中心，上传本地文件到我的图片/视频                                   | myseller.taobao.com | 2026-03-29 |
 | multi-ai-query      | 自动将提问发送给多个 AI 大模型（ChatGPT、Gemini、Kimi、DeepSeek、Qwen、Grok、豆包） | multi-ai            | 2026-03-29 |
 | x-article-translate | 将 X(Twitter) 文章链接转为本地 Markdown，图片同步到图床                             | x.com               | 2026-03-30 |
+| wx-article-publish  | 将 Markdown 转为微信公众号富文本，并自动进入草稿箱创建新文章后填充标题与正文           | wechat              | 2026-03-31 |
 
 ## 浏览哲学
 
@@ -403,4 +404,5 @@ updated: 2026-03-27
 | `references/cdp-api.md`                | 需要 CDP Proxy API 详细参考时      |
 | `references/agent-browser.md`          | agent-browser 连接或操作遇到问题时 |
 | `references/site-patterns/{domain}.md` | 确定目标网站后，读取对应站点经验   |
+| `references/wx-article-theme.css`         | 微信公众号富文本默认主题样式     |
 | `workflows/_template.md`               | 创建新 workflow 时，参考模板格式   |

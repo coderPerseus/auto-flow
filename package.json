@@ -19,6 +19,10 @@
   },
   "homepage": "https://github.com/coderPerseus/auto-flow#readme",
   "dependencies": {
+    "cheerio": "^1.2.0",
+    "css": "^3.0.0",
+    "markdown-it": "^14.1.1",
+    "markdown-it-footnote": "^4.0.0",
     "turndown": "^7.2.2"
   }
 }

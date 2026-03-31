@@ -164,7 +164,7 @@ function buildTurndown() {
 function cleanMarkdown(text) {
   return text
     .replace(/\n{3,}/g, '\n\n')
-    .replace(/^##\s*\n+([^\n])/gm, '## $1')
+    .replace(/^(#{1,6})\s*\n+([^\n])/gm, '$1 $2')
     .trim();
 }
 
@@ -194,13 +194,18 @@ try {
     const lines = document.body.innerText.split("\\n").map((s) => s.trim()).filter(Boolean);
     const noise = new Set(["To view keyboard shortcuts, press question mark", "View keyboard shortcuts"]);
     const titleStart = lines.findIndex((line) => !noise.has(line));
-    const title = lines[titleStart] || '';
+    const titleNode = document.querySelector('[data-testid="twitter-article-title"]');
+    const title = (titleNode?.innerText || lines[titleStart] || '').trim();
     const author = lines[titleStart + 1] || '';
     const handle = lines[titleStart + 2] || '';
     const date = lines[titleStart + 4] === '·' ? lines[titleStart + 5] : (lines[titleStart + 4] || lines[titleStart + 3] || '');
 
-    const heading = Array.from(document.querySelectorAll('h2')).find((node) => node.innerText.includes('My Mental Model'));
-    const content = heading?.parentElement?.parentElement;
+    const richTextRoot = document.querySelector('[data-testid="twitterArticleRichTextView"]');
+    const content =
+      richTextRoot?.querySelector('[data-contents="true"]') ||
+      richTextRoot?.querySelector('.DraftEditor-root [data-contents="true"]') ||
+      Array.from(document.querySelectorAll('h2')).find((node) => node.innerText.includes('My Mental Model'))?.parentElement?.parentElement ||
+      null;
     const children = content ? Array.from(content.children).map((child, index) => ({
       i: index,
       tag: child.tagName,
@@ -213,7 +218,16 @@ try {
     })) : [];
 
     const allMediaHrefs = Array.from(document.querySelectorAll('a[href*="/media/"]')).map((a) => a.href);
-    return JSON.stringify({ title, author, handle, date, children, allMediaHrefs });
+    return JSON.stringify({
+      title,
+      author,
+      handle,
+      date,
+      contentTag: content?.tagName || null,
+      childCount: children.length,
+      children,
+      allMediaHrefs,
+    });
   })()`);
 
   await fs.writeFile(path.join(logsDir, 'page-data-latest.json'), JSON.stringify(pageData, null, 2));
