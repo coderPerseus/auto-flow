@@ -33,6 +33,7 @@ bash ${CLAUDE_SKILL_DIR}/scripts/check-deps.sh
 | multi-ai-query      | 自动将提问发送给多个 AI 大模型（ChatGPT、Gemini、Kimi、DeepSeek、Qwen、Grok、豆包） | multi-ai            | 2026-03-29 |
 | x-article-translate | 将 X(Twitter) 文章链接转为本地 Markdown，图片同步到图床                             | x.com               | 2026-03-30 |
 | wx-article-publish  | 将 Markdown 转为微信公众号富文本，并自动进入草稿箱创建新文章后填充标题与正文           | wechat              | 2026-03-31 |
+| markdown-image-card | 将 Markdown 渲染为 3:4 比例图片，并在导出图上叠加文字或图片水印                        | local               | 2026-03-31 |
 
 ## 浏览哲学
 

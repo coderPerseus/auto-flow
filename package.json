@@ -4,6 +4,7 @@
   "description": "基于 agent-browser 和 CDP 的浏览器 workflow 自动化 skill。",
   "main": "index.js",
   "scripts": {
+    "render:markdown-card": "node scripts/markdown-image/render-markdown-card.mjs",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -23,6 +24,8 @@
     "css": "^3.0.0",
     "markdown-it": "^14.1.1",
     "markdown-it-footnote": "^4.0.0",
+    "playwright": "^1.58.2",
+    "sharp": "^0.34.5",
     "turndown": "^7.2.2"
   }
 }
