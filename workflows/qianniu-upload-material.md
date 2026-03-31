@@ -1,14 +1,18 @@
 ---
 name: 千牛上传素材
-description: 上传本地图片到千牛素材中心和商品发布页，完成 AI 智能发品
+description: 上传本地图片到千牛素材中心和商品发布页，完成 AI 智能发品并自动填充编辑表单
 domain: myseller.taobao.com
 params:
   - name: files
     description: 要上传的本地文件路径，支持单个路径或多个路径数组
     required: true
     example: ["/path/to/image1.png", "/path/to/image2.jpg"]
+  - name: product_form_file
+    description: 商品表单参数 JSON 文件路径，定义标题、卖点、价格、库存、详情描述和属性字段
+    required: true
+    example: "/Users/zozy/code/personal/auto-flow/references/qianniu-product-form.example.json"
 created: 2026-03-27
-updated: 2026-03-30
+updated: 2026-03-31
 ---
 
 # 千牛上传素材
@@ -17,6 +21,7 @@ updated: 2026-03-30
 
 - 已在 Chrome 中登录千牛后台（淘宝卖家账号）
 - 准备好要上传的本地文件路径
+- 准备好商品表单参数 JSON（可参考 `references/qianniu-product-form.example.json`）
 
 ## 性能优化说明
 
@@ -163,3 +168,45 @@ curl -s -X POST "http://localhost:3456/eval?target=PUBLISH_ID" \
 ```
 **description**: 品牌已选、图片已上传，点击"确认，下一步"跳转到完整编辑表单。
 **verify**: URL 变为 `item.upload.taobao.com/sell/v2/publish.htm`，页面包含基础信息、销售信息、物流服务等表单区块
+
+### Step 6: 自动填充商品详情页表单
+
+**command**:
+```bash
+node ${CLAUDE_SKILL_DIR}/scripts/qianniu/fill-publish-form.mjs \
+  --target "${PUBLISH_ID}" \
+  --product "商品表单 JSON 路径"
+```
+**description**: 在发布编辑页读取本地 JSON 参数文件，按字段标签自动匹配并填充常见表单项。脚本优先处理商品标题、卖点、价格、划线价、库存、重量、商家编码、品牌、运费模板和详情描述；同时支持 `attributes`、`selects`、`radios`、`fields` 四类扩展字段，用于补充类目属性、单选项和自定义标签字段。匹配方式以页面可见标签文本为主，兼容普通 `input/textarea`、下拉选择、单选选项以及 `contenteditable` 富文本区域。脚本会输出 `filled/skipped` 报告；若一个字段都没填上则直接失败，若部分字段未匹配则保留 `partial` 状态供 AI 兜底继续完成。
+**verify**: 脚本输出 JSON 结果中 `status` 为 `ok` 或 `partial`，且 `filled` 至少包含商品标题或价格等核心字段；页面仍停留在 `publish.htm`，基础信息/销售信息区块中能看到已写入的值
+
+## 商品表单参数示例
+
+参考文件：`references/qianniu-product-form.example.json`
+
+```json
+{
+  "title": "韩系慵懒风豹纹数字印花宽松长袖T恤女白色圆领上衣",
+  "subtitle": "宽松落肩版型，春秋可单穿或叠搭",
+  "description": "1. 白色底色搭配豹纹数字印花，视觉简洁不单调。\n2. 宽松版型和落肩袖设计，上身更有松弛感。\n3. 面料轻薄柔软，适合春秋日常通勤、校园和休闲穿搭。",
+  "price": "79",
+  "originalPrice": "99",
+  "stock": "200",
+  "brand": "无品牌",
+  "itemCode": "WYI-70-WHT",
+  "weight": "0.35",
+  "attributes": {
+    "袖长": "长袖",
+    "领型": "圆领"
+  },
+  "radios": {
+    "是否开票": "否"
+  },
+  "fields": {
+    "材质成分": {
+      "mode": "text",
+      "value": "棉"
+    }
+  }
+}
+```
