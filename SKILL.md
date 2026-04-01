@@ -20,16 +20,16 @@ bash ${CLAUDE_SKILL_DIR}/scripts/check-deps.sh
 ```
 
 - **Node.js 22+**：必需（使用原生 WebSocket），如果没有安装先尝试自动安装
-- **Chrome remote-debugging**：在 Chrome 地址栏打开 `chrome://inspect/#remote-debugging`，勾选 **"Allow remote debugging for this browser instance"**，可能需要重启浏览器
+- **Chrome remote-debugging**：在 Chrome 地址栏打开 `chrome://inspect/#remote-debugging`，勾选 **"Allow remote debugging for this browser instance"**，可能需要重启浏览器。skill 会自动发现并缓存调试端点，不要求用户手动提供 `127.0.0.1:9222` 这类地址
 - **agent-browser**：`npm i -g agent-browser` ,需要检测是否已经是最新版本（npm ls -g agent-browser --depth=0; npm view agent-browser version），如果不是最新版本需要更新(npm install -g agent-browser@latest)
 
-检查通过后再执行操作，未通过则引导用户完成设置。
+检查通过后再执行操作。若未通过，只要求用户打开 Chrome 调试开关并在完成后继续，不要求用户手动报告服务地址或端口。
 
 ## 已有 Workflow
 
 | 名称                | 描述                                                                                | 适用站点            | 更新日期   |
 | ------------------- | ----------------------------------------------------------------------------------- | ------------------- | ---------- |
-| 千牛上传素材        | 打开千牛后台素材中心，上传本地文件到我的图片/视频                                   | myseller.taobao.com | 2026-03-29 |
+| 千牛上传素材        | 打开千牛后台素材中心和商品发布页，上传文件并默认保存为草稿                           | myseller.taobao.com | 2026-04-01 |
 | multi-ai-query      | 自动将提问发送给多个 AI 大模型（ChatGPT、Gemini、Kimi、DeepSeek、Qwen、Grok、豆包） | multi-ai            | 2026-03-29 |
 | x-article-translate | 将 X(Twitter) 文章链接转为本地 Markdown，图片同步到图床                             | x.com               | 2026-03-30 |
 | wx-article-publish  | 将 Markdown 转为微信公众号富文本，并自动进入草稿箱创建新文章后填充标题与正文           | wechat              | 2026-03-31 |

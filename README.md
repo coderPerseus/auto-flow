@@ -24,7 +24,7 @@ git clone <repo-url> ~/.claude/skills/auto-flow
 ## 前置配置
 
 1. **Node.js 22+**
-2. **Chrome 开启远程调试**：地址栏打开 `chrome://inspect/#remote-debugging`，勾选 **Allow remote debugging for this browser instance**
+2. **Chrome 开启远程调试**：地址栏打开 `chrome://inspect/#remote-debugging`，勾选 **Allow remote debugging for this browser instance**。skill 会自动发现并缓存调试端点，不需要手动告诉它 `127.0.0.1:9222`
 3. **agent-browser**：`npm i -g agent-browser`
 
 运行环境检查：
@@ -32,6 +32,8 @@ git clone <repo-url> ~/.claude/skills/auto-flow
 ```bash
 bash ~/.claude/skills/auto-flow/scripts/check-deps.sh
 ```
+
+如果检查失败，只需要开启 Chrome 调试并重新执行检查；不要再要求用户手动报告服务地址或端口。
 
 ## 使用
 

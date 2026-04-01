@@ -5,10 +5,7 @@
 
 import http from 'node:http';
 import { URL } from 'node:url';
-import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
-import net from 'node:net';
+import { discoverChromeDebugEndpoint } from './discover-chrome-debug.mjs';
 
 const PORT = parseInt(process.env.CDP_PROXY_PORT || '3456');
 let ws = null;
@@ -32,104 +29,27 @@ if (typeof globalThis.WebSocket !== 'undefined') {
   }
 }
 
-// --- 自动发现 Chrome 调试端口 ---
-async function discoverChromePort() {
-  // 1. 尝试读 DevToolsActivePort 文件
-  const possiblePaths = [];
-  const platform = os.platform();
-
-  if (platform === 'darwin') {
-    const home = os.homedir();
-    possiblePaths.push(
-      path.join(home, 'Library/Application Support/Google/Chrome/DevToolsActivePort'),
-      path.join(home, 'Library/Application Support/Google/Chrome Canary/DevToolsActivePort'),
-      path.join(home, 'Library/Application Support/Chromium/DevToolsActivePort'),
-    );
-  } else if (platform === 'linux') {
-    const home = os.homedir();
-    possiblePaths.push(
-      path.join(home, '.config/google-chrome/DevToolsActivePort'),
-      path.join(home, '.config/chromium/DevToolsActivePort'),
-    );
-  } else if (platform === 'win32') {
-    const localAppData = process.env.LOCALAPPDATA || '';
-    possiblePaths.push(
-      path.join(localAppData, 'Google/Chrome/User Data/DevToolsActivePort'),
-      path.join(localAppData, 'Chromium/User Data/DevToolsActivePort'),
-    );
-  }
-
-  for (const p of possiblePaths) {
-    try {
-      const content = fs.readFileSync(p, 'utf-8').trim();
-      const lines = content.split('\n');
-      const port = parseInt(lines[0]);
-      if (port > 0 && port < 65536) {
-        const ok = await checkPort(port);
-        if (ok) {
-          // 第二行是带 UUID 的 WebSocket 路径（如 /devtools/browser/xxx-xxx）
-          // 非显式 --remote-debugging-port 启动时，Chrome 可能只接受此路径
-          const wsPath = lines[1] || null;
-          console.log(`[CDP Proxy] 从 DevToolsActivePort 发现端口: ${port}${wsPath ? ' (带 wsPath)' : ''}`);
-          return { port, wsPath };
-        }
-      }
-    } catch { /* 文件不存在，继续 */ }
-  }
-
-  // 2. 扫描常用端口
-  const commonPorts = [9222, 9229, 9333];
-  for (const port of commonPorts) {
-    const ok = await checkPort(port);
-    if (ok) {
-      console.log(`[CDP Proxy] 扫描发现 Chrome 调试端口: ${port}`);
-      return { port, wsPath: null };
-    }
-  }
-
-  return null;
-}
-
-// 用 TCP 探测端口是否监听——避免 WebSocket 连接触发 Chrome 安全弹窗
-// （WebSocket 探测会被 Chrome 视为调试连接，弹出授权对话框）
-function checkPort(port) {
-  return new Promise((resolve) => {
-    const socket = net.createConnection(port, '127.0.0.1');
-    const timer = setTimeout(() => { socket.destroy(); resolve(false); }, 2000);
-    socket.once('connect', () => { clearTimeout(timer); socket.destroy(); resolve(true); });
-    socket.once('error', () => { clearTimeout(timer); resolve(false); });
-  });
-}
-
-function getWebSocketUrl(port, wsPath) {
-  if (wsPath) return `ws://127.0.0.1:${port}${wsPath}`;
-  return `ws://127.0.0.1:${port}/devtools/browser`;
-}
-
 // --- WebSocket 连接管理 ---
-let chromePort = null;
-let chromeWsPath = null;
+let chromeEndpoint = null;
 
 let connectingPromise = null;
 async function connect() {
   if (ws && (ws.readyState === WS.OPEN || ws.readyState === 1)) return;
   if (connectingPromise) return connectingPromise;  // 复用进行中的连接
 
-  if (!chromePort) {
-    const discovered = await discoverChromePort();
-    if (!discovered) {
+  if (!chromeEndpoint) {
+    chromeEndpoint = await discoverChromeDebugEndpoint();
+    if (!chromeEndpoint) {
       throw new Error(
         'Chrome 未开启远程调试端口。请用以下方式启动 Chrome：\n' +
         '  macOS: /Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=9222\n' +
         '  Linux: google-chrome --remote-debugging-port=9222\n' +
-        '  或在 chrome://flags 中搜索 "remote debugging" 并启用'
+        '  或在 chrome://inspect/#remote-debugging 中勾选 Allow remote debugging for this browser instance'
       );
     }
-    chromePort = discovered.port;
-    chromeWsPath = discovered.wsPath;
   }
 
-  const wsUrl = getWebSocketUrl(chromePort, chromeWsPath);
+  const wsUrl = chromeEndpoint.wsUrl;
   if (!wsUrl) throw new Error('无法获取 Chrome WebSocket URL');
 
   return connectingPromise = new Promise((resolve, reject) => {
@@ -138,7 +58,7 @@ async function connect() {
     const onOpen = () => {
       cleanup();
       connectingPromise = null;
-      console.log(`[CDP Proxy] 已连接 Chrome (端口 ${chromePort})`);
+      console.log(`[CDP Proxy] 已连接 Chrome (${chromeEndpoint.host}:${chromeEndpoint.port}, ${chromeEndpoint.source})`);
       resolve();
     };
     const onError = (e) => {
@@ -151,8 +71,7 @@ async function connect() {
     const onClose = () => {
       console.log('[CDP Proxy] 连接断开');
       ws = null;
-      chromePort = null; // 重置端口缓存，下次连接重新发现
-      chromeWsPath = null;
+      chromeEndpoint = null; // 重置缓存，下次连接重新发现
       sessions.clear();
     };
     const onMessage = (evt) => {
@@ -267,7 +186,14 @@ const server = http.createServer(async (req, res) => {
     // /health 不需要连接 Chrome
     if (pathname === '/health') {
       const connected = ws && (ws.readyState === WS.OPEN || ws.readyState === 1);
-      res.end(JSON.stringify({ status: 'ok', connected, sessions: sessions.size, chromePort }));
+      res.end(JSON.stringify({
+        status: 'ok',
+        connected,
+        sessions: sessions.size,
+        chromeHost: chromeEndpoint?.host || null,
+        chromePort: chromeEndpoint?.port || null,
+        chromeSource: chromeEndpoint?.source || null,
+      }));
       return;
     }
 
