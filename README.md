@@ -2,7 +2,7 @@
 
 基于 agent-browser 和 CDP 的浏览器 workflow 自动化 skill。
 
-将浏览器操作沉淀为可复用的 workflow 文件——通过对话逐步走通流程，记录每一步的精确命令 + 自然语言描述 + 验证条件，后续一键执行。执行时命令失败会自动兜底：AI 根据描述 + 当前页面状态自主恢复。
+将浏览器操作沉淀为可复用的 workflow 文件：通过对话逐步走通流程，记录每一步的精确命令 + 自然语言描述 + 验证条件，后续一键执行。执行时命令失败会自动兜底，AI 会根据描述 + 当前页面状态自主恢复。
 
 ## 能力
 
@@ -18,7 +18,25 @@
 ## 安装
 
 ```bash
-git clone <repo-url> ~/.claude/skills/auto-flow
+npx skills add https://github.com/coderPerseus/auto-flow
+```
+
+列出仓库内可安装的 skill：
+
+```bash
+npx skills add https://github.com/coderPerseus/auto-flow --list
+```
+
+只安装 `auto-flow`：
+
+```bash
+npx skills add https://github.com/coderPerseus/auto-flow --skill auto-flow
+```
+
+如果要安装到全局目录：
+
+```bash
+npx skills add https://github.com/coderPerseus/auto-flow --skill auto-flow --global
 ```
 
 ## 前置配置
@@ -27,7 +45,7 @@ git clone <repo-url> ~/.claude/skills/auto-flow
 2. **Chrome 开启远程调试**：地址栏打开 `chrome://inspect/#remote-debugging`，勾选 **Allow remote debugging for this browser instance**。skill 会自动发现并缓存调试端点，不需要手动告诉它 `127.0.0.1:9222`
 3. **agent-browser**：`npm i -g agent-browser`
 
-运行环境检查：
+安装后运行环境检查：
 
 ```bash
 bash ~/.claude/skills/auto-flow/scripts/check-deps.sh
