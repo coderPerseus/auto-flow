@@ -63,6 +63,91 @@ bash ${CLAUDE_SKILL_DIR}/scripts/check-deps.sh
 
 所有浏览器操作都在用户日常 Chrome 中进行，天然携带登录态。操作要求：不主动操作用户已有 tab，所有操作在自己创建的 tab 中完成（必须）。
 
+## 执行策略：重脚本轻 AI
+
+**原则：确定性操作交给脚本，AI 只在必须判断时介入。**
+
+AI 的价值在于理解、判断、应变——不在于执行 `agent-browser open URL` 这种确定性指令。每次 AI 介入都有推理延迟和 token 开销。因此：
+
+| 操作类型 | 执行方式 | 示例 |
+|---------|---------|------|
+| **确定性操作**（URL 已知、选择器固定、填写内容确定） | Shell 脚本批量执行 | 打开页面、点击已知按钮、填写表单、上传文件、关闭 tab |
+| **需要判断的操作**（页面结构未知、内容需理解、动态决策） | AI 介入 | 分析页面结构、判断内容是否符合预期、处理异常弹窗、兜底恢复 |
+| **验证操作**（检查结果是否符合预期） | 脚本验证优先，AI 验证兜底 | URL 包含关键词、元素存在性检查用脚本；语义判断用 AI |
+
+### 脚本化执行模式
+
+将连续的确定性 step 合并为一个 shell 脚本块，一次性执行：
+
+```bash
+#!/bin/bash
+# 多个确定性步骤合并为脚本，减少 AI 介入次数
+agent-browser open "https://example.com/page"
+agent-browser wait --load networkidle
+agent-browser snapshot -i
+
+# 用 snapshot 输出做简单的文本匹配验证
+SNAP=$(agent-browser snapshot -i 2>&1)
+if echo "$SNAP" | grep -q "目标元素"; then
+  agent-browser click @e3
+  agent-browser fill @e5 "固定文本"
+  echo "OK"
+else
+  echo "NEED_AI"  # 脚本无法处理，交给 AI
+  exit 1
+fi
+```
+
+### Workflow Step 的脚本化写法
+
+在 workflow 文件中，step 的 `command` 字段支持两种形式：
+
+**单命令**（现有方式，适合简单操作）：
+```markdown
+**command**: `agent-browser click @e1`
+```
+
+**脚本块**（推荐，适合连续确定性操作）：
+```markdown
+**command**:
+​```bash
+agent-browser open "https://example.com"
+agent-browser wait --load networkidle
+agent-browser snapshot -i
+agent-browser click @e3
+agent-browser fill @e5 "${param_text}"
+agent-browser snapshot -i
+​```
+```
+
+脚本块中可以引用 workflow 的 `params`，用 `${param_name}` 占位。
+
+### @ref 动态性问题的处理
+
+`@ref`（如 `@e3`）在页面变化后失效，所以脚本中跨 snapshot 的 `@ref` 不可硬编码。处理方式：
+
+1. **同一 snapshot 内的多个操作**可以连续使用 `@ref`（页面未变化，ref 有效）
+2. **跨 snapshot 时**，脚本内重新 snapshot 并用 `grep` + 文本匹配定位新 ref：
+   ```bash
+   agent-browser snapshot -i > /tmp/snap.txt
+   REF=$(grep "提交按钮" /tmp/snap.txt | grep -oP '@e\d+')
+   agent-browser click "$REF"
+   ```
+3. **无法脚本化定位时**，标记 `exit 1` 让 AI 接管
+
+### 自进化方向
+
+Workflow 的进化目标不仅是修正失效的 command，更要**提升脚本化率**：
+
+- **首次创建**：逐步 AI 探索，记录每一步
+- **稳定运行后**：将连续成功的 step 合并为脚本块，减少 AI 介入点
+- **进化指标**：一个成熟 workflow 的 AI 介入点应该越来越少，理想状态是只在异常处理和语义判断时才需要 AI
+
+复盘时除了评估 command 是否失效，还要评估：
+- 哪些连续 step 每次都一次通过？→ 合并为脚本块
+- 哪些 verify 可以用脚本完成？→ 改为脚本内 `grep` / 条件判断
+- AI 介入的真正原因是什么？→ 只保留必要的 AI 介入点
+
 ## 浏览器操作基础
 
 有两种操作浏览器的方式，根据场景选择或混合使用：
@@ -275,12 +360,16 @@ updated: 2026-03-27
 
 **① 准备** — 读取 workflow 文件，确认前置条件，收集所需参数
 
-**② 逐步执行** — 按 step 顺序执行，每步遵循：
+**② 逐步执行** — 按 step 顺序执行，脚本优先：
 
 ```
-command 成功 → verify 通过 → 下一步
-command 失败 ──┐
-verify 不通过 ─┤→ AI 读取 description + snapshot 当前页面 → 自主操作 → 再 verify
+脚本块 command → 一次性执行所有确定性操作 → verify
+  ├─ 脚本成功 + verify 通过 → 跳到下一个 AI 介入点或下一个脚本块
+  └─ 脚本失败(exit 1) 或 verify 不通过 → AI 介入兜底
+
+单命令 command → 执行 → verify
+  ├─ 成功 → 下一步
+  └─ 失败 → AI 读取 description + snapshot → 自主操作 → 再 verify
 ```
 
 **③ 兜底恢复** — 当 command 失败或 verify 不通过时：
@@ -321,7 +410,7 @@ verify 不通过 ─┤→ AI 读取 description + snapshot 当前页面 → 自
 | **高：必须更新** | command 执行报错（选择器失效、元素不存在、API 变更）；每次执行大概率复现 | 立即更新 step 的 command 和 description       |
 | **中：建议更新** | command 成功但 verify 不通过（页面结构微调、时序问题）；兜底方案明显更优 | 更新 command，在 description 中补充新发现     |
 | **低：记录观察** | 偶发性问题（网络延迟、一次性弹窗）；兜底后原路径仍可用                   | 不改 command，但在 description 中追加注意事项 |
-| **无需处理**     | 全部 step 一次通过                                                       | 不做任何改动                                  |
+| **无需处理**     | 全部 step 一次通过                                                       | 考虑是否可合并为脚本块以提速                  |
 
 **③ 执行更新** — 根据评估结果：
 
@@ -342,6 +431,7 @@ verify 不通过 ─┤→ AI 读取 description + snapshot 当前页面 → 自
 - **只写验证过的事实**：更新的 command 必须是本次执行中实际成功的操作，不猜测、不泛化
 - **保留兜底能力**：command 变了但 description 的自然语言描述必须保持完整——它是最后的兜底依据，不能因为 command 更新了就简化 description
 - **渐进式改进**：每次执行只更新本次发现的问题，不主动重构未出问题的 step
+- **提升脚本化率**：每次复盘都检视是否有连续成功的 step 可合并为脚本块，减少下次执行的 AI 介入次数和总耗时
 - **向用户透明**：复盘结束后，简要告知用户做了哪些更新及原因（一两句话即可，不需要冗长报告）
 
 ### 列出 workflow

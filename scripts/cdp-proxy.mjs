@@ -4,6 +4,7 @@
 // Node.js 22+（使用原生 WebSocket）
 
 import http from 'node:http';
+import net from 'node:net';
 import { URL } from 'node:url';
 import { discoverChromeDebugEndpoint } from './discover-chrome-debug.mjs';
 

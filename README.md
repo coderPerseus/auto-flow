@@ -97,6 +97,11 @@ references/
   site-patterns/                  # 站点经验
 ```
 
+## Acknowledgments
+
+- [web-access](https://github.com/eze-is/web-access) — CDP Proxy 的灵感来源
+- [agent-browser](https://github.com/vercel-labs/agent-browser) — 核心浏览器交互引擎
+
 ## License
 
 MIT
